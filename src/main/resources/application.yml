@@ -1,0 +1,53 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: ai-code-assistant
+  datasource:
+    url: jdbc:mysql://localhost:3306/ai_code_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  jackson:
+    default-property-inclusion: non_null
+
+langchain4j:
+  ollama:
+    base-url: http://localhost:11434
+    chat-model:
+      model-name: qwen2.5-coder:14b   # 建议使用具备工具调用能力的模型，如 qwen2.5-coder:14b / qwen2.5:14b
+      temperature: 0.2
+      timeout: 120s
+
+assistant:
+  agent:
+    max-tool-rounds: 5                # 工具调用最大轮次，防止 Agent 死循环
+    max-result-chars: 4000            # 工具返回结果超过该长度即截断，控制 LLM 上下文
+    summarize-when-truncated: false   # 截断后是否调用 LLM 生成摘要（额外消耗 token）
+    memory-window-size: 20            # 单会话保留的最大消息条数
+    max-sessions: 100                 # 内存中保留的最大会话数
+  security:
+    # 允许读取的源码根目录：仅允许读取这些目录内的相对路径文件（请按实际环境修改）
+    allowed-source-roots:
+      - /home/dev/projects
+      # - /opt/app
+    max-source-file-size-kb: 512      # 单个源码文件大小上限（KB）
+    read-only-db: true                # 数据库工具只读（本实现仅查询 information_schema）
+    injection-guard-enabled: true     # 提示注入防护开关
+    max-file-lines: 2000              # 文件读取工具单次返回的最大行数
+  logging:
+    enabled: true                     # 记录模型调用日志到 MySQL
+    max-log-chars: 6000               # 日志中请求/响应文本最大长度
+
+logging:
+  level:
+    com.example.aicodeassistant: info

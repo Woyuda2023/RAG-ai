@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 代码助手</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: #f0f2f5;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #1f2329;
+            color: #fff;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 { font-size: 18px; font-weight: 600; }
+        header .meta { font-size: 12px; color: #8a919f; }
+        main { flex: 1; overflow-y: auto; padding: 20px 24px; }
+        .msg {
+            max-width: 780px;
+            margin: 0 auto 14px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+        .user { background: #d9e8ff; margin-left: 60px; }
+        .assistant { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.08); margin-right: 60px; }
+        .tool-line {
+            font-size: 12px; color: #7a5cd6; margin: 4px 0 0;
+        }
+        .tool-line .tag {
+            display: inline-block; background: #efeafc; border-radius: 4px; padding: 1px 8px; margin-right: 6px;
+        }
+        .footer { padding: 12px 24px 20px; }
+        .input-box {
+            max-width: 780px; margin: 0 auto;
+            display: flex; gap: 10px;
+            background: #fff; border-radius: 12px; padding: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+        textarea {
+            flex: 1; border: none; outline: none; resize: none;
+            font-size: 14px; line-height: 1.5; padding: 8px; height: 46px;
+            font-family: inherit;
+        }
+        button {
+            background: #3370ff; color: #fff; border: none; border-radius: 8px;
+            padding: 0 22px; font-size: 14px; cursor: pointer;
+        }
+        button:disabled { background: #9db6ff; cursor: not-allowed; }
+        .hint { max-width: 780px; margin: 6px auto 0; font-size: 12px; color: #8a919f; }
+        .error { color: #d54941; }
+        .loading { color: #8a919f; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>AI 代码助手</h1>
+    <div class="meta" id="sessionInfo">会话: 未开始</div>
+</header>
+<main id="messages">
+    <div class="msg assistant">你好，我是 AI 代码助手。可以让我：<br>· 生成代码（如：用 Java 写一个读取 CSV 文件的工具类）<br>· 审查代码（如：审查下面这段 Java 代码，重点关注安全性）<br>· 查询表结构（如：查询 user 表的表结构）<br>· 读取源码文件（如：读取 src/main/java/com/example/Demo.java）</div>
+</main>
+<div class="footer">
+    <div class="input-box">
+        <textarea id="input" placeholder="输入你的需求，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="send">发送</button>
+    </div>
+    <div class="hint">发送后请稍候，Agent 可能调用多个工具完成你的任务（最长约 1-2 分钟）。</div>
+</div>
+<script>
+    const sessionKey = 'aiCodeAssistantSession';
+    let sessionId = sessionStorage.getItem(sessionKey) || '';
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const sessionInfo = document.getElementById('sessionInfo');
+
+    if (sessionId) sessionInfo.textContent = '会话: ' + sessionId.slice(0, 8) + '…';
+
+    function append(text, cls) {
+        const div = document.createElement('div');
+        div.className = 'msg ' + cls;
+        div.textContent = text;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return div;
+    }
+
+    function appendTools(tools) {
+        if (!tools || tools.length === 0) return;
+        const div = document.createElement('div');
+        div.className = 'tool-line';
+        div.innerHTML = tools.map(t => '<span class="tag">工具: ' + t + '</span>').join('');
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function send() {
+        const message = inputEl.value.trim();
+        if (!message) return;
+        inputEl.value = '';
+        append(message, 'user');
+
+        const loading = append('思考中，Agent 正在调度工具…', 'assistant loading');
+        sendBtn.disabled = true;
+        try {
+            const resp = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId: sessionId, message: message })
+            });
+            const data = await resp.json();
+            sessionId = data.sessionId || sessionId;
+            sessionStorage.setItem(sessionKey, sessionId);
+            sessionInfo.textContent = '会话: ' + sessionId.slice(0, 8) + '…';
+            loading.remove();
+            if (!data.success) {
+                append('出错：' + (data.error || '未知错误') + '（taskId=' + data.taskId + '）', 'assistant error');
+                return;
+            }
+            append(data.reply, 'assistant');
+            appendTools(data.tools);
+            const note = document.createElement('div');
+            note.className = 'tool-line';
+            note.textContent = 'taskId=' + data.taskId + ' · 工具轮次=' + data.toolRounds;
+            messagesEl.appendChild(note);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        } catch (e) {
+            loading.remove();
+            append('请求失败：' + e.message, 'assistant error');
+        } finally {
+            sendBtn.disabled = false;
+            inputEl.focus();
+        }
+    }
+
+    sendBtn.addEventListener('click', send);
+    inputEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            send();
+        }
+    });
+</script>
+</body>
+</html>
