@@ -5,3 +5,6 @@ target/
 *.iml
 .vscode/
 .DS_Store
+
+# 前端备份
+_backup/
