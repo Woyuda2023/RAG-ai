@@ -1,16 +1,21 @@
 package com.example.aicodeassistant;
 
+import com.example.aicodeassistant.agent.AgentResult;
+import com.example.aicodeassistant.agent.ToolInvocation;
 import com.example.aicodeassistant.config.AssistantProperties;
 import com.example.aicodeassistant.processing.ResultTruncator;
+import com.example.aicodeassistant.repository.ReviewReportRepository;
 import com.example.aicodeassistant.security.InputSanitizer;
 import com.example.aicodeassistant.security.PermissionGuard;
 import com.example.aicodeassistant.security.PromptInjectionFilter;
+import com.example.aicodeassistant.service.ReviewReportService;
 import com.example.aicodeassistant.tool.ToolResult;
 import com.example.aicodeassistant.validation.ToolResultValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -145,5 +150,24 @@ class CoreLogicTest {
         assertTrue(result.content().contains("已截断"));
         assertTrue(result.content().startsWith("aaaaaa"));
         assertTrue(result.content().endsWith("aaaaaa"));
+    }
+
+    // ---------- 审查报告落库解析 ----------
+
+    @Test
+    void reviewReportService_extractsIssuesFromWrappedToolResult() {
+        ReviewReportRepository repository = Mockito.mock(ReviewReportRepository.class);
+        ReviewReportService service = new ReviewReportService(repository, new ObjectMapper());
+
+        // 编排器回填给模型的统一包装结构：data 字段内是审查 JSON 字符串
+        String wrapped = """
+                {"success":true,"data":"{\\"summary\\":\\"总体结论\\",\\"issues\\":[{\\"severity\\":\\"CRITICAL\\",\\"line\\":3,\\"type\\":\\"SQL注入\\",\\"description\\":\\"拼接SQL\\",\\"suggestion\\":\\"用PreparedStatement\\"},{\\"severity\\":\\"MAJOR\\",\\"line\\":-1,\\"type\\":\\"异常处理\\",\\"description\\":\\"缺try-catch\\",\\"suggestion\\":\\"补try-catch\\"}]}","meta":{}}""";
+
+        AgentResult result = new AgentResult(true, "审查完成", 1,
+                List.of(ToolInvocation.success("reviewCode", wrapped, 500L)), "s1");
+
+        int saved = service.saveFromAgentResult(7L, result);
+        assertEquals(2, saved);
+        Mockito.verify(repository, Mockito.times(2)).save(Mockito.any());
     }
 }

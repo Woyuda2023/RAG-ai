@@ -27,6 +27,8 @@ public class ReviewReportService {
 
     /**
      * 从一次 Agent 执行结果中提取审查报告并落库。
+     * 工具调用记录中的 resultJson 为统一包装结构 {"success":true,"data":"<审查JSON>","meta":{...}}，
+     * 需先取出 data 字段中的审查 JSON 再解析。
      *
      * @return 落库的审查问题条数
      */
@@ -38,10 +40,28 @@ public class ReviewReportService {
         int saved = 0;
         for (ToolInvocation invocation : result.invocations()) {
             if ("reviewCode".equals(invocation.name()) && invocation.success()) {
-                saved += saveFromJson(taskId, invocation.resultJson());
+                saved += saveFromWrappedJson(taskId, invocation.resultJson());
             }
         }
         return saved;
+    }
+
+    /** 从统一包装结构中提取 data 字段（审查 JSON）并落库 */
+    private int saveFromWrappedJson(Long taskId, String wrappedJson) {
+        if (wrappedJson == null || wrappedJson.isBlank()) {
+            return 0;
+        }
+        try {
+            JsonNode wrapper = objectMapper.readTree(wrappedJson);
+            JsonNode dataNode = wrapper.get("data");
+            if (dataNode == null || !dataNode.isTextual() || dataNode.asText().isBlank()) {
+                return 0;
+            }
+            return saveFromJson(taskId, dataNode.asText());
+        } catch (Exception e) {
+            log.warn("审查报告包装结构解析失败: {}", e.getMessage());
+            return 0;
+        }
     }
 
     /**
