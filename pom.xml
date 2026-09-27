@@ -15,7 +15,7 @@
     <artifactId>ai-code-assistant</artifactId>
     <version>1.0.0</version>
     <name>ai-code-assistant</name>
-    <description>基于 LangChain4j 与 Ollama 的 AI 代码助手（Agent + Tool Calling 架构）</description>
+    <description>基于 LangChain4j 与云端大模型 API 的 AI 代码助手（Agent + Tool Calling 架构）</description>
 
     <properties>
         <java.version>17</java.version>
@@ -46,7 +46,7 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- LangChain4j 核心 + Ollama 模型接入 -->
+        <!-- LangChain4j 核心 + OpenAI 兼容云端大模型接入 -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
@@ -54,7 +54,7 @@
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-ollama</artifactId>
+            <artifactId>langchain4j-open-ai</artifactId>
             <version>${langchain4j.version}</version>
         </dependency>
 

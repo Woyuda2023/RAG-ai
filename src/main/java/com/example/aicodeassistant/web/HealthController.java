@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 健康检查：Ollama 服务与 MySQL 连接状态。
+ * 健康检查：云端大模型 API（OpenAI 兼容）与 MySQL 连接状态。
  */
 @Slf4j
 @RestController
@@ -28,34 +28,42 @@ public class HealthController {
 
     private final JdbcTemplate jdbcTemplate;
 
-    @Value("${langchain4j.ollama.base-url:http://localhost:11434}")
-    private String ollamaBaseUrl;
+    @Value("${llm.base-url:https://api.deepseek.com}")
+    private String llmBaseUrl;
+
+    @Value("${llm.api-key:}")
+    private String llmApiKey;
 
     @GetMapping("/health")
     public Map<String, Object> health() {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ollama", ollamaStatus());
+        body.put("llm", llmStatus());
         body.put("mysql", mysqlStatus());
         return body;
     }
 
-    private String ollamaStatus() {
+    /**
+     * 检查云端 API 连通性：请求 {base-url}/models。
+     * 200（成功）与 401/403（鉴权失败但服务可达）均视为服务在线。
+     */
+    private String llmStatus() {
         try {
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(Duration.ofSeconds(3))
                     .build();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(ollamaBaseUrl + "/api/tags"))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build();
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-                return "UP (" + ollamaBaseUrl + ")";
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
+                    .uri(URI.create(llmBaseUrl + "/models"))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Authorization", "Bearer " + llmApiKey)
+                    .GET();
+            HttpResponse<String> response = client.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            int code = response.statusCode();
+            if (code == 200 || code == 401 || code == 403) {
+                return "UP (" + llmBaseUrl + ", HTTP " + code + ")";
             }
-            return "DOWN (HTTP " + response.statusCode() + ")";
+            return "DOWN (HTTP " + code + ")";
         } catch (Exception e) {
-            log.warn("Ollama 健康检查失败: {}", e.getMessage());
+            log.warn("云端大模型 API 健康检查失败: {}", e.getMessage());
             return "DOWN (" + e.getMessage() + ")";
         }
     }

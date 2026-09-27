@@ -7,7 +7,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/ai_code_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
     username: root
-    password: root
+    password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     hibernate:
@@ -20,13 +20,14 @@ spring:
   jackson:
     default-property-inclusion: non_null
 
-langchain4j:
-  ollama:
-    base-url: http://localhost:11434
-    chat-model:
-      model-name: qwen2.5-coder:14b   # 建议使用具备工具调用能力的模型，如 qwen2.5-coder:14b / qwen2.5:14b
-      temperature: 0.2
-      timeout: 120s
+llm:
+  # 云端大模型 API（OpenAI 兼容协议）。主流厂商对照见 README「云端大模型接入」一节
+  base-url: https://api.deepseek.com
+  api-key: your-api-key               # 填入你的 API Key（如 DeepSeek / 通义 / Kimi / 智谱）
+  model-name: deepseek-chat           # 建议使用具备工具调用能力的模型（deepseek-chat 等）
+  temperature: 0.2
+  timeout: 120s
+  max-retries: 2                      # 网络错误自动重试次数
 
 assistant:
   agent:

@@ -23,7 +23,7 @@ public class CodeTaskService {
 
     private final CodeTaskRepository repository;
 
-    @Value("${langchain4j.ollama.chat-model.model-name:qwen2.5-coder:14b}")
+    @Value("${llm.model-name:deepseek-chat}")
     private String modelName;
 
     /** 创建任务（RUNNING） */

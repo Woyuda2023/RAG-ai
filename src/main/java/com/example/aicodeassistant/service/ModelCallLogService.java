@@ -29,7 +29,7 @@ public class ModelCallLogService {
     private final ModelCallLogRepository repository;
     private final ObjectMapper objectMapper;
 
-    @Value("${langchain4j.ollama.chat-model.model-name:qwen2.5-coder:14b}")
+    @Value("${llm.model-name:deepseek-chat}")
     private String modelName;
 
     /**

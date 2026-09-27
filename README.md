@@ -1,8 +1,11 @@
 # AI 代码助手（AI Code Assistant）
 
-基于 **Spring Boot 3 + LangChain4j + Ollama + MySQL** 开发的 AI 代码助手，采用 **Agent + Tool Calling**
-架构：能够理解用户自然语言需求，自主判断是否调用工具，完成 **代码生成、代码审查、表结构查询、源码文件读取** 等任务，
-并对模型调用与任务结果进行持久化记录，方便问题追溯。
+基于 **Spring Boot 3 + LangChain4j + 云端大模型 API（OpenAI 兼容）+ MySQL** 开发的 AI 代码助手，
+采用 **Agent + Tool Calling** 架构：能够理解用户自然语言需求，自主判断是否调用工具，完成
+**代码生成、代码审查、表结构查询、源码文件读取** 等任务，并对模型调用与任务结果进行持久化记录，方便问题追溯。
+
+> 云端接入：DeepSeek、通义千问、Kimi、智谱 GLM、豆包等主流厂商均提供 OpenAI 兼容端点，
+> 本工程通过 `langchain4j-open-ai` 统一接入，**切换厂商只需修改 `application.yml` 中的 `llm.*` 配置**，无需改代码。
 
 ## 功能特性
 
@@ -23,7 +26,7 @@ flowchart LR
     API --> ORC[AgentOrchestrator<br/>工具调用循环]
     ORC --> SAN[InputSanitizer<br/>输入过滤]
     ORC --> MEM[ChatMemory<br/>会话记忆]
-    ORC -->|携带工具规格| LLM[Ollama<br/>ChatLanguageModel]
+    ORC -->|携带工具规格| LLM[云端大模型 API<br/>OpenAI 兼容]
     LLM -->|AiMessage| ORC
     ORC -->|解析工具调用请求| REG[ToolRegistry]
     REG --> VAL[ToolResultValidator<br/>JSON 参数/结果校验]
@@ -63,7 +66,7 @@ ai-code-assistant
     │   │   └── TaskTypeClassifier.java     # 任务类型分类
     │   ├── config/
     │   │   ├── AssistantProperties.java    # 助手行为配置（agent/security/logging）
-    │   │   └── LlmConfig.java              # Ollama 模型接入
+    │   │   └── LlmConfig.java              # 云端大模型接入（OpenAI 兼容）
     │   ├── entity/                         # JPA 实体：CodeTask / ReviewReport / ModelCallLog
     │   ├── processing/
     │   │   └── ResultTruncator.java        # 结果截断 + 可选 LLM 摘要
@@ -78,9 +81,24 @@ ai-code-assistant
     │   │   └── ToolResultValidator.java    # JSON 格式校验
     │   └── web/                            # ChatController / TaskController / LogController / HealthController
     └── resources/
-        ├── application.yml                 # 数据源 / Ollama / 助手配置
+        ├── application.yml                 # 数据源 / 云端 LLM / 助手配置
         └── static/index.html               # 简易聊天页面
 ```
+
+## 云端大模型接入（选一家即可）
+
+所有厂商均走 OpenAI 兼容协议，只需配置 `base-url / api-key / model-name` 三项：
+
+| 厂商 | Base URL | 推荐模型（工具调用） | 获取 Key |
+| --- | --- | --- | --- |
+| DeepSeek（默认示例） | `https://api.deepseek.com` | `deepseek-chat` | platform.deepseek.com |
+| 通义千问（阿里云） | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` / `qwen-max` | bailian.console.aliyun.com |
+| Kimi（月之暗面） | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` 等 | platform.moonshot.cn |
+| 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-plus` / `glm-4-flash` | open.bigmodel.cn |
+| 豆包（火山方舟） | 按方舟控制台提供的兼容端点 | `doubao-pro-32k` 等 | console.volcengine.com/ark |
+
+> 提示：`deepseek-reasoner`、`o1` 类推理模型可能不支持函数调用，请优先选择支持 tool calling 的模型
+> （如 `deepseek-chat`、`qwen-plus`、`glm-4-flash`）。
 
 ## 快速开始
 
@@ -90,9 +108,8 @@ ai-code-assistant
 | --- | --- | --- |
 | JDK | 17+ | 编译与运行 |
 | Maven | 3.6.3+ | 构建（本机 3.6.1 过旧，可用 `apache-maven-3.9.9`） |
-| MySQL | 8.0+ | 业务库，默认库名 `ai_code_assistant`，账号密码见 `application.yml` |
-| Ollama | 最新 | 本地大模型服务，默认 `http://localhost:11434` |
-| 模型 | 具备工具调用能力 | 推荐 `qwen2.5-coder:14b`（`ollama pull qwen2.5-coder:14b`） |
+| MySQL | 8.0+ | 业务库，默认库名 `ai_code_assistant` |
+| 云端大模型 API | - | OpenAI 兼容端点 + API Key（无需本地部署模型） |
 
 ### 2. 初始化数据库
 
@@ -109,18 +126,17 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/ai_code_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useSSL=false
     username: root
-    password: root   # 改为你的密码
+    password: 123456   # 你的 MySQL 密码
 
-langchain4j:
-  ollama:
-    base-url: http://localhost:11434
-    chat-model:
-      model-name: qwen2.5-coder:14b
+llm:
+  base-url: https://api.deepseek.com          # 按上表选一家
+  api-key: your-api-key                        # 填入你的 API Key
+  model-name: deepseek-chat
 
 assistant:
   security:
     allowed-source-roots:
-      - /home/dev/projects   # 改为你允许 AI 读取的源码目录
+      - /home/dev/projects                    # 改为你允许 AI 读取的源码目录
 ```
 
 ### 4. 启动
@@ -131,19 +147,14 @@ mvn spring-boot:run
 mvn -DskipTests package && java -jar target/ai-code-assistant.jar
 ```
 
-启动后访问 `http://localhost:8080` 使用内置聊天页面，健康检查：`GET /api/health`。
+启动后访问 `http://localhost:8080` 使用内置聊天页面，健康检查：`GET /api/health`（应显示 `llm: UP`、`mysql: UP`）。
 
 ### 5. Linux 部署示例
 
 ```bash
-# 安装 Ollama 并拉取模型
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5-coder:14b
-
-# 构建并部署
 mvn -DskipTests package
 nohup java -jar target/ai-code-assistant.jar --spring.datasource.username=root \
-  --spring.datasource.password=yourpass > app.log 2>&1 &
+  --spring.datasource.password=yourpass --llm.api-key=your-key > app.log 2>&1 &
 ```
 
 ## API 说明
@@ -156,7 +167,7 @@ nohup java -jar target/ai-code-assistant.jar --spring.datasource.username=root \
 | GET | `/api/tasks/{id}/reports` | 任务的代码审查报告 |
 | GET | `/api/logs?taskId=&page=&size=` | 模型调用日志 |
 | DELETE | `/api/sessions/{sessionId}` | 清空会话记忆 |
-| GET | `/api/health` | Ollama 与 MySQL 健康状态 |
+| GET | `/api/health` | 云端 LLM 与 MySQL 健康状态 |
 
 示例：
 
@@ -217,14 +228,16 @@ curl -X POST http://localhost:8080/api/chat -H "Content-Type: application/json" 
 | 问题 | 处理 |
 | --- | --- |
 | 启动报数据库连接失败 | 确认 MySQL 已启动、账号密码与 `application.yml` 一致 |
-| 模型不调用工具 | 确认 Ollama 模型具备工具调用能力（推荐 qwen2.5 系列），并检查 `/api/health` 中 ollama 状态 |
-| 响应超时 | 增大 `langchain4j.ollama.chat-model.timeout`；或降低 `max-result-chars` |
+| `/api/health` 显示 llm DOWN | 检查 `llm.api-key` 是否有效、`llm.base-url` 是否可达（401 表示 Key 无效，服务本身可达） |
+| 模型不调用工具 | 确认所选模型支持工具调用（推荐 deepseek-chat / qwen-plus / glm-4-flash；reasoner 类推理模型可能不支持） |
+| 响应超时 | 增大 `llm.timeout`；或降低 `max-result-chars` |
 | token 超限 | 降低 `max-result-chars`、`max-file-lines`；开启 `summarize-when-truncated` |
 | 工具参数报“缺少必需参数” | 属正常防护：模型未给出完整参数时拦截并引导重试 |
 
 ## 安全注意事项（部署到生产环境前）
 
 - `allowed-source-roots` 仅配置可信源码目录；切勿配置为 `/` 或整个磁盘；
+- **API Key 请通过环境变量或启动参数下发**（`java -jar app.jar --llm.api-key=xxx`），不要提交到仓库；
 - 生产环境请为 MySQL 使用最小权限账号（本应用仅需 `SELECT` 于 `information_schema` + 业务表读写）；
 - 如对外提供服务，建议增加接口鉴权（如 Spring Security / Token），并将 `/api/logs` 等接口纳入权限控制；
 - `createDatabaseIfNotExist=true` 建议在生产移除，由 DBA 统一建库授权。
