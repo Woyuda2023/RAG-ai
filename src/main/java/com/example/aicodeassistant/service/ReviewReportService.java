@@ -3,7 +3,7 @@ package com.example.aicodeassistant.service;
 import com.example.aicodeassistant.agent.AgentResult;
 import com.example.aicodeassistant.agent.ToolInvocation;
 import com.example.aicodeassistant.entity.ReviewReport;
-import com.example.aicodeassistant.repository.ReviewReportRepository;
+import com.example.aicodeassistant.mapper.ReviewReportMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -15,14 +15,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 代码审查报告服务：将 CodeReviewTool 输出的 JSON 审查报告解析并落库。
+ * 代码审查报告服务：将 CodeReviewTool 输出的 JSON 审查报告解析并落库（MyBatis）。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReviewReportService {
 
-    private final ReviewReportRepository repository;
+    private final ReviewReportMapper mapper;
     private final ObjectMapper objectMapper;
 
     /**
@@ -91,7 +91,7 @@ public class ReviewReportService {
                         .suggestion(text(issue, "suggestion"))
                         .createdAt(LocalDateTime.now())
                         .build();
-                repository.save(report);
+                mapper.insert(report);
                 saved++;
             }
             return saved;
@@ -102,7 +102,7 @@ public class ReviewReportService {
     }
 
     public List<ReviewReport> findByTaskId(Long taskId) {
-        return repository.findByTaskIdOrderByCreatedAtAsc(taskId);
+        return mapper.findByTaskId(taskId);
     }
 
     private String text(JsonNode node, String field) {

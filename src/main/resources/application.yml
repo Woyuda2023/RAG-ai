@@ -9,25 +9,25 @@ spring:
     username: root
     password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  jpa:
-    hibernate:
-      ddl-auto: update
-    open-in-view: false
-    show-sql: false
-    properties:
-      hibernate:
-        format_sql: true
   jackson:
     default-property-inclusion: non_null
 
+# MyBatis：下划线字段自动映射为驼峰属性
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
 llm:
-  # 云端大模型 API（OpenAI 兼容协议）。主流厂商对照见 README「云端大模型接入」一节
+  # 云端大模型 API（OpenAI 兼容协议）。当前使用已验证可用的智谱 GLM 配置；
+  # 切换通义千问只需改 base-url 为 https://dashscope.aliyuncs.com/compatible-mode/v1、
+  # api-key 为 DashScope Key（sk- 开头）、model-name 为 qwen-plus/qwen-turbo/qwen-max。
   base-url: https://open.bigmodel.cn/api/paas/v4
   api-key: ${LLM_API_KEY:}
-  model-name: glm-4.7-flash           # 智谱 GLM-4.7-Flash（支持工具调用）
+  model-name: glm-4.7-flash
   temperature: 0.2
   timeout: 120s
-  max-retries: 2                      # 网络错误自动重试次数
+  max-retries: 2                     # 网络/瞬时错误自动重试次数
+  max-tokens: 2048                   # 限制单次回复最大 token 用量，防止超限
 
 assistant:
   agent:
@@ -36,6 +36,14 @@ assistant:
     summarize-when-truncated: false   # 截断后是否调用 LLM 生成摘要（额外消耗 token）
     memory-window-size: 20            # 单会话保留的最大消息条数
     max-sessions: 100                 # 内存中保留的最大会话数
+    system-prompt: |
+      你是「AI 代码助手」，一个基于 Agent + Tool Calling 架构、面向开发人员的智能编程助手。
+      你可以根据用户需求自主判断是否调用工具：读取源码文件、查询数据库表结构、生成代码、审查代码、编写单元测试、查询代码规范、校验代码格式。
+      输出规范：
+      1) 代码一律放在 Markdown 代码块中并标注语言（如 ```java）；
+      2) 先给出结论再给细节，语言简洁；代码生成与单元测试任务只输出代码和必要说明，不输出无关内容；
+      3) 代码审查任务输出结构化结论与问题清单；
+      4) 回答用户问题时使用用户使用的语言。
   security:
     # 允许读取的源码根目录：仅允许读取这些目录内的相对路径文件（请按实际环境修改）
     allowed-source-roots:

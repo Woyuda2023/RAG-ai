@@ -1,9 +1,12 @@
 package com.example.aicodeassistant.agent;
 
+import com.example.aicodeassistant.tool.CodeFormatCheckTool;
 import com.example.aicodeassistant.tool.CodeGenerationTool;
 import com.example.aicodeassistant.tool.CodeReviewTool;
+import com.example.aicodeassistant.tool.CodeSpecQueryTool;
 import com.example.aicodeassistant.tool.DbSchemaQueryTool;
 import com.example.aicodeassistant.tool.SourceFileReaderTool;
+import com.example.aicodeassistant.tool.UnitTestGenerationTool;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
@@ -34,11 +37,17 @@ public class ToolRegistry {
     public ToolRegistry(SourceFileReaderTool sourceFileReaderTool,
                         DbSchemaQueryTool dbSchemaQueryTool,
                         CodeGenerationTool codeGenerationTool,
-                        CodeReviewTool codeReviewTool) {
+                        CodeReviewTool codeReviewTool,
+                        UnitTestGenerationTool unitTestGenerationTool,
+                        CodeSpecQueryTool codeSpecQueryTool,
+                        CodeFormatCheckTool codeFormatCheckTool) {
         register(sourceFileReaderTool);
         register(dbSchemaQueryTool);
         register(codeGenerationTool);
         register(codeReviewTool);
+        register(unitTestGenerationTool);
+        register(codeSpecQueryTool);
+        register(codeFormatCheckTool);
         log.info("已注册工具 {} 个: {}", specifications.size(), tools.keySet());
     }
 

@@ -1,8 +1,9 @@
 # AI 代码助手（AI Code Assistant）
 
-基于 **Spring Boot 3 + LangChain4j + 云端大模型 API（OpenAI 兼容）+ MySQL** 开发的 AI 代码助手，
-采用 **Agent + Tool Calling** 架构：能够理解用户自然语言需求，自主判断是否调用工具，完成
-**代码生成、代码审查、表结构查询、源码文件读取** 等任务，并对模型调用与任务结果进行持久化记录，方便问题追溯。
+基于 **Spring Boot 3 + LangChain4j + 云端大模型 API（OpenAI 兼容）+ MySQL + MyBatis** 开发的
+面向开发人员的智能 Agent 后端：能够理解用户自然语言需求，自主判断是否调用工具，完成
+**代码生成、代码审查、单元测试编写、查询代码规范、代码格式校验、表结构查询、源码文件读取** 等任务，
+并持久化会话/消息/任务/审查报告/模型调用日志，方便问题追溯。
 
 > 云端接入：DeepSeek、通义千问、Kimi、智谱 GLM、豆包等主流厂商均提供 OpenAI 兼容端点，
 > 本工程通过 `langchain4j-open-ai` 统一接入，**切换厂商只需修改 `application.yml` 中的 `llm.*` 配置**，无需改代码。
@@ -11,12 +12,14 @@
 
 | 模块 | 说明 |
 | --- | --- |
-| Agent 调度 | 基于 LangChain4j 实现手动工具调用循环：模型自主判断是否调用工具；`max-tool-rounds` 控制工具调用最大轮次，防止 Agent 死循环；会话级记忆窗口 |
-| 工具开发 | 自定义工具集：读取源码文件、查询数据库表结构、代码生成、代码审查（`@Tool` 注解 + 反射注册） |
+| Agent 调度 | 基于 LangChain4j 实现手动工具调用循环（Tool Calling）：模型自主判断是否调用工具；`max-tool-rounds` 控制工具调用最大轮次，防止 Agent 死循环；会话级记忆窗口 |
+| 工具开发 | 自定义工具集（7 个）：读取源码文件、查询数据库表结构、代码生成、代码审查、**单元测试编写**、**查询代码规范**、**代码格式校验**（`@Tool` 注解 + 反射注册） |
 | 调用校验 | 模型下发的工具调用参数做 JSON 解析校验与必需参数校验；工具返回结果做统一结构（ToolResult）校验，失败即拦截并回填错误 |
 | 安全防护 | 输入过滤（控制字符清理、长度上限、注入特征检测）、权限隔离（源码读取仅限配置根目录、禁绝对路径与 `..` 穿越、表名白名单、只读查询）、提示注入过滤（工具内容回填前扫描并隔离“忽略指令/输出提示词”等注入片段） |
-| 结果处理 | 工具返回超过 `max-result-chars` 自动截断（保留头尾），可选 LLM 摘要，控制 LLM 上下文长度、避免 token 超限 |
-| 任务记录 | MySQL 存储代码任务（`code_task`）、审查报告（`review_report`）、模型调用日志（`model_call_log`，含 token 用量与耗时） |
+| 结果处理 | 工具返回超过 `max-result-chars` 自动截断（保留头尾），可选 LLM 摘要；**`max-tokens` 限制单次回复 token 用量**，控制 LLM 上下文长度、避免 token 超限 |
+| 会话管理 | `chat_session` / `chat_message` 表持久化会话与消息（保存用户需求、模型返回内容与创建时间），提供创建/列表/历史/删除四类会话接口 |
+| 业务容错 | 输入内容校验（@NotBlank + @Size）；捕获 **API 限流（429 / rate limit）、调用超时、鉴权失败** 等异常并分类给出可读提示；`max-retries` 自动重试瞬时错误 |
+| 任务记录 | MySQL（MyBatis）存储代码任务（`code_task`）、审查报告（`review_report`）、模型调用日志（`model_call_log`，含 token 用量与耗时） |
 
 ## 系统架构
 
@@ -35,11 +38,16 @@ flowchart LR
     TOOL --> DB[DbSchemaQueryTool<br/>查询表结构]
     TOOL --> GEN[CodeGenerationTool<br/>代码生成]
     TOOL --> REV[CodeReviewTool<br/>代码审查]
+    TOOL --> UT[UnitTestGenerationTool<br/>单元测试编写]
+    TOOL --> SPEC[CodeSpecQueryTool<br/>查询代码规范]
+    TOOL --> FMT[CodeFormatCheckTool<br/>代码格式校验]
     TOOL -->|ToolResult JSON| FILT[PromptInjectionFilter<br/>注入过滤]
     FILT --> TRUNC[ResultTruncator<br/>截断/摘要]
     TRUNC -->|安全结果回填| ORC
     ORC -->|最终回复| API
-    API --> MYSQL[(MySQL<br/>任务/报告/日志)]
+    API --> MYSQL[(MySQL + MyBatis<br/>会话/消息/任务/报告/日志)]
+    API --> SESS[SessionController<br/>会话管理接口]
+    SESS --> MYSQL
     SRC -.->|受限根目录| FS[(源码目录)]
     DB -.->|information_schema 只读| MYSQL
 ```
@@ -52,37 +60,39 @@ flowchart LR
 
 ```
 ai-code-assistant
-├── pom.xml                          # Maven 配置（Spring Boot 3.3.5 / LangChain4j 0.36.2）
+├── pom.xml                          # Maven 配置（Spring Boot 3.3.5 / LangChain4j 0.36.2 / MyBatis 3.0.4）
 ├── sql/
-│   └── schema.sql                   # MySQL 建表脚本（3 张表）
+│   └── schema.sql                   # MySQL 建表脚本（5 张表，MyBatis 不自动建表，首次部署必须执行）
 └── src/main/
     ├── java/com/example/aicodeassistant/
-    │   ├── AiCodeAssistantApplication.java
+    │   ├── AiCodeAssistantApplication.java   # 启动类（@MapperScan 扫描 mapper 包）
     │   ├── agent/
-    │   │   ├── AgentOrchestrator.java      # Agent 调度器：手动工具调用循环 + 最大轮次控制
+    │   │   ├── AgentOrchestrator.java      # Agent 调度器：手动工具调用循环 + 最大轮次 + 限流/超时容错
     │   │   ├── AgentResult.java            # 执行结果封装
     │   │   ├── ToolInvocation.java         # 单次工具调用记录
-    │   │   ├── ToolRegistry.java           # 工具注册表（反射收集 @Tool）
-    │   │   └── TaskTypeClassifier.java     # 任务类型分类
+    │   │   ├── ToolRegistry.java           # 工具注册表（反射收集 @Tool，共 7 个工具）
+    │   │   └── TaskTypeClassifier.java     # 任务类型分类（CHAT/CODE_GENERATION/CODE_REVIEW/UNIT_TEST/SCHEMA_QUERY）
+    │   ├── common/
+    │   │   └── Paged.java                  # 手写分页结果（替代 Spring Data Page）
     │   ├── config/
-    │   │   ├── AssistantProperties.java    # 助手行为配置（agent/security/logging）
-    │   │   └── LlmConfig.java              # 云端大模型接入（OpenAI 兼容）
-    │   ├── entity/                         # JPA 实体：CodeTask / ReviewReport / ModelCallLog
+    │   │   ├── AssistantProperties.java    # 助手行为配置（agent/security/logging/system-prompt）
+    │   │   └── LlmConfig.java              # 云端大模型接入（OpenAI 兼容 + maxTokens）
+    │   ├── entity/                         # POJO：CodeTask / ReviewReport / ModelCallLog / ChatSession / ChatMessage
+    │   ├── mapper/                         # MyBatis Mapper：CodeTask / ReviewReport / ModelCallLog / ChatSession / ChatMessage
     │   ├── processing/
     │   │   └── ResultTruncator.java        # 结果截断 + 可选 LLM 摘要
-    │   ├── repository/                     # Spring Data JPA 仓库
     │   ├── security/
     │   │   ├── InputSanitizer.java         # 输入过滤与注入特征检测
     │   │   ├── PermissionGuard.java        # 路径/表名/只读 权限隔离
     │   │   └── PromptInjectionFilter.java  # 工具内容注入过滤
-    │   ├── service/                        # CodeTaskService / ReviewReportService / ModelCallLogService
-    │   ├── tool/                           # SourceFileReaderTool / DbSchemaQueryTool / CodeGenerationTool / CodeReviewTool / ToolResult
+    │   ├── service/                        # CodeTaskService / ReviewReportService / ModelCallLogService / ChatSessionService
+    │   ├── tool/                           # SourceFileReaderTool / DbSchemaQueryTool / CodeGenerationTool / CodeReviewTool / UnitTestGenerationTool / CodeSpecQueryTool / CodeFormatCheckTool / ToolResult
     │   ├── validation/
     │   │   └── ToolResultValidator.java    # JSON 格式校验
-    │   └── web/                            # ChatController / TaskController / LogController / HealthController
+    │   └── web/                            # ChatController / SessionController / TaskController / LogController / HealthController
     └── resources/
-        ├── application.yml                 # 数据源 / 云端 LLM / 助手配置
-        └── static/index.html               # 简易聊天页面
+        ├── application.yml                 # 数据源 / 云端 LLM（含 max-tokens）/ MyBatis / 助手配置
+        └── static/index.html               # 前端演示页面
 ```
 
 ## 云端大模型接入（选一家即可）
@@ -117,7 +127,8 @@ ai-code-assistant
 mysql -uroot -p < sql/schema.sql
 ```
 
-> 应用配置了 `spring.jpa.hibernate.ddl-auto=update`，也可不执行脚本直接由 JPA 自动建表。
+> 使用 MyBatis，**不会自动建表**，首次部署必须执行上述脚本（建表语句为 `IF NOT EXISTS`，重复执行安全；
+> 已有旧表会跳过）。
 
 ### 3. 修改配置（application.yml）
 
@@ -128,10 +139,15 @@ spring:
     username: root
     password: 123456   # 你的 MySQL 密码
 
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true   # 下划线字段自动映射驼峰属性
+
 llm:
-  base-url: https://api.deepseek.com          # 按上表选一家
-  api-key: your-api-key                        # 填入你的 API Key
-  model-name: deepseek-chat
+  base-url: https://open.bigmodel.cn/api/paas/v4   # 当前配置智谱 GLM；切通义千问改为 https://dashscope.aliyuncs.com/compatible-mode/v1
+  api-key: your-api-key                              # 填入你的 API Key
+  model-name: glm-4.7-flash                          # 切通义千问改为 qwen-plus / qwen-turbo / qwen-max
+  max-tokens: 2048                                   # 限制单次回复最大 token 用量
 
 assistant:
   security:
@@ -161,12 +177,15 @@ nohup java -jar target/ai-code-assistant.jar --spring.datasource.username=root \
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/api/chat` | 对话入口，body：`{"sessionId":"可选","message":"你的需求"}` |
+| POST | `/api/chat` | 对话入口，body：`{"sessionId":"可选","message":"你的需求"}`（自动持久化用户消息与模型返回） |
+| POST | `/api/sessions` | 创建会话，返回 `sessionId` |
+| GET | `/api/sessions` | 会话列表（含标题与消息条数） |
+| GET | `/api/sessions/{sessionId}/messages` | 会话历史消息 |
+| DELETE | `/api/sessions/{sessionId}` | 删除会话（级联删除消息与内存记忆） |
 | GET | `/api/tasks?page=0&size=10` | 任务列表 |
 | GET | `/api/tasks/{id}` | 任务详情 |
 | GET | `/api/tasks/{id}/reports` | 任务的代码审查报告 |
 | GET | `/api/logs?taskId=&page=&size=` | 模型调用日志 |
-| DELETE | `/api/sessions/{sessionId}` | 清空会话记忆 |
 | GET | `/api/health` | 云端 LLM 与 MySQL 健康状态 |
 
 示例：
@@ -216,10 +235,22 @@ curl -X POST http://localhost:8080/api/chat -H "Content-Type: application/json" 
 
 ### 结果处理与上下文控制
 `ResultTruncator` 对超过 `max-result-chars` 的工具结果按“头 60% + 尾 40%”截断；开启
-`summarize-when-truncated` 时可进一步调用 LLM 压缩要点。日志落库同样做长度截断。
+`summarize-when-truncated` 时可进一步调用 LLM 压缩要点。`llm.max-tokens` 限制单次回复最大 token
+用量，双重控制避免 token 超限。日志落库同样做长度截断。
+
+### 会话管理与消息持久化
+`ChatSessionService` 负责 `chat_session` / `chat_message` 的读写：首条用户消息截断生成会话标题；
+每次对话把用户需求（USER）与模型返回（ASSISTANT）落库并关联任务 ID；删除会话时级联删除消息，
+并同步清理内存记忆。`SessionController` 提供创建 / 列表 / 历史 / 删除四类接口。
+
+### 业务容错（限流 / 超时 / 重试）
+- 对话输入经 `@NotBlank + @Size` 校验（`ChatRequest`），非法请求直接拒绝；
+- `AgentOrchestrator` 捕获模型调用异常并分类：`429 / rate limit / 访问量过大` → 限流提示；
+  `timeout` → 超时提示；`401 / api key` → 鉴权提示；其余归为通用失败，均以可读信息返回并落库失败状态；
+- `llm.max-retries` 对瞬时网络错误自动重试。
 
 ### 任务记录
-- `code_task`：任务类型（分类器按关键词粗分类）、状态、结果摘要、工具轮次；
+- `code_task`：任务类型（分类器按关键词粗分类：CHAT / CODE_GENERATION / CODE_REVIEW / UNIT_TEST / SCHEMA_QUERY）、状态、结果摘要、工具轮次；
 - `review_report`：审查 JSON 逐条解析落库（严重级别/行号/问题描述/建议）；
 - `model_call_log`：每次 LLM 调用的请求、响应、工具调用、token 用量与耗时。
 

@@ -1,129 +1,129 @@
 package com.example.aicodeassistant.service;
 
+import com.example.aicodeassistant.common.Paged;
 import com.example.aicodeassistant.entity.ModelCallLog;
-import com.example.aicodeassistant.repository.ModelCallLogRepository;
+import com.example.aicodeassistant.mapper.ModelCallLogMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.output.Response;
-import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * 模型调用日志服务：每次 LLM 调用落一条日志，记录请求、响应、工具调用与 token 用量。
+ * 模型调用日志服务：写入每次 LLM 调用的请求/响应/token 用量，供问题追溯；支持分页查询。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ModelCallLogService {
 
-    private final ModelCallLogRepository repository;
+    private final ModelCallLogMapper mapper;
     private final ObjectMapper objectMapper;
 
-    @Value("${llm.model-name:deepseek-chat}")
+    @org.springframework.beans.factory.annotation.Value("${llm.model-name:qwen-plus}")
     private String modelName;
 
     /**
      * 记录一次模型调用。
      *
-     * @param taskId          关联任务 ID（可空）
-     * @param sessionId       会话 ID
-     * @param response        模型响应
-     * @param requestMessages 请求消息列表
-     * @param latencyMs       调用耗时
-     * @param maxChars        日志文本最大长度
+     * @param taskId   关联任务 ID（字符串形式）
+     * @param sessionId 会话 ID
+     * @param response 模型响应
+     * @param messages 请求消息（含系统提示词与历史上下文）
+     * @param elapsed  调用耗时（毫秒）
+     * @param maxChars 请求/响应文本最大记录长度，超出截断
      */
     public void record(String taskId, String sessionId, Response<AiMessage> response,
-                       List<ChatMessage> requestMessages, long latencyMs, int maxChars) {
+                       List<ChatMessage> messages, long elapsed, int maxChars) {
         try {
+            AiMessage aiMessage = response.content();
+            String responseText = truncate(aiMessage.text(), maxChars);
+
+            // 工具调用请求（JSON 文本）
+            String toolCalls = null;
+            if (aiMessage.hasToolExecutionRequests()) {
+                List<Map<String, String>> calls = new ArrayList<>();
+                for (ToolExecutionRequest request : aiMessage.toolExecutionRequests()) {
+                    Map<String, String> call = new LinkedHashMap<>();
+                    call.put("name", request.name());
+                    call.put("arguments", truncate(request.arguments(), maxChars));
+                    calls.add(call);
+                }
+                toolCalls = objectMapper.writeValueAsString(calls);
+            }
+
+            Integer promptTokens = response.tokenUsage() == null ? null : response.tokenUsage().inputTokenCount();
+            Integer completionTokens = response.tokenUsage() == null ? null : response.tokenUsage().outputTokenCount();
+
             ModelCallLog logEntry = ModelCallLog.builder()
                     .sessionId(sessionId)
-                    .taskId(taskId == null || taskId.isBlank() ? null : Long.valueOf(taskId))
+                    .taskId(taskId == null ? null : parseLong(taskId))
                     .modelName(modelName)
-                    .requestMessages(truncate(serializeMessages(requestMessages), maxChars))
-                    .responseMessage(truncate(response.content().text(), maxChars))
-                    .toolCalls(truncate(serializeToolCalls(response.content()), maxChars))
-                    .latencyMs(latencyMs)
+                    .requestMessages(truncate(toRequestText(messages), maxChars))
+                    .responseMessage(responseText)
+                    .toolCalls(toolCalls)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(promptTokens != null && completionTokens != null
+                            ? promptTokens + completionTokens : null)
+                    .latencyMs(elapsed)
+                    .createdAt(LocalDateTime.now())
                     .build();
-            TokenUsage usage = response.tokenUsage();
-            if (usage != null) {
-                logEntry.setPromptTokens(usage.inputTokenCount());
-                logEntry.setCompletionTokens(usage.outputTokenCount());
-                logEntry.setTotalTokens(usage.totalTokenCount());
-            }
-            repository.save(logEntry);
+            mapper.insert(logEntry);
         } catch (Exception e) {
-            log.warn("模型调用日志写入失败: {}", e.getMessage());
+            log.warn("记录模型调用日志失败: {}", e.getMessage());
         }
     }
 
-    private String serializeMessages(List<ChatMessage> messages) {
+    /** 请求消息序列化为可读文本（角色 + 文本摘要） */
+    private String toRequestText(List<ChatMessage> messages) {
         if (messages == null || messages.isEmpty()) {
             return "";
         }
         StringBuilder sb = new StringBuilder();
         for (ChatMessage message : messages) {
-            sb.append(roleOf(message)).append(": ");
-            if (message instanceof SystemMessage system) {
-                sb.append(system.text());
-            } else if (message instanceof UserMessage user) {
-                sb.append(user.text());
-            } else if (message instanceof AiMessage ai) {
-                sb.append(ai.text());
-                if (ai.hasToolExecutionRequests()) {
-                    sb.append(" [工具调用: ")
-                            .append(ai.toolExecutionRequests().stream()
-                                    .map(r -> r.name() + "(" + r.arguments() + ")")
-                                    .toList())
-                            .append("]");
-                }
-            } else if (message instanceof ToolExecutionResultMessage tool) {
-                sb.append(tool.toolName()).append(" => ").append(tool.text());
+            sb.append('[').append(message.type().name()).append("] ");
+            if (message instanceof AiMessage ai) {
+                sb.append(ai.text() == null ? "（工具调用）" : ai.text());
+            } else {
+                sb.append(message.text());
             }
-            sb.append("\n");
+            sb.append('\n');
         }
         return sb.toString();
     }
 
-    private String serializeToolCalls(AiMessage aiMessage) {
-        if (aiMessage == null || !aiMessage.hasToolExecutionRequests()) {
-            return "";
-        }
+    private Long parseLong(String value) {
         try {
-            List<String> calls = aiMessage.toolExecutionRequests().stream()
-                    .map(r -> "{\"name\":\"" + r.name() + "\",\"arguments\":" + r.arguments() + "}")
-                    .toList();
-            return "[" + String.join(",", calls) + "]";
-        } catch (Exception e) {
-            return "[工具调用序列化失败]";
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            return null;
         }
-    }
-
-    private String roleOf(ChatMessage message) {
-        return switch (message.type()) {
-            case SYSTEM -> "system";
-            case USER -> "user";
-            case AI -> "assistant";
-            case TOOL_EXECUTION_RESULT -> "tool";
-        };
     }
 
     private String truncate(String text, int maxChars) {
         if (text == null) {
             return "";
         }
-        if (text.length() <= maxChars) {
-            return text;
-        }
-        return text.substring(0, maxChars) + "...[日志截断]";
+        return text.length() <= maxChars ? text : text.substring(0, maxChars);
+    }
+
+    public Paged<ModelCallLog> list(Long taskId, int page, int size) {
+        int p = Math.max(page, 0);
+        int s = Math.min(Math.max(size, 1), 100);
+        long total = taskId == null ? mapper.countAll() : mapper.countByTaskId(taskId);
+        List<ModelCallLog> items = taskId == null
+                ? mapper.findPage(p * s, s)
+                : mapper.findByTaskIdPage(taskId, p * s, s);
+        return new Paged<>(items, total, p, s);
     }
 }

@@ -1,11 +1,9 @@
 package com.example.aicodeassistant.web;
 
+import com.example.aicodeassistant.common.Paged;
 import com.example.aicodeassistant.entity.ModelCallLog;
-import com.example.aicodeassistant.repository.ModelCallLogRepository;
+import com.example.aicodeassistant.service.ModelCallLogService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,21 +20,18 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class LogController {
 
-    private final ModelCallLogRepository repository;
+    private final ModelCallLogService logService;
 
     @GetMapping
     public Map<String, Object> list(@RequestParam(required = false) Long taskId,
                                     @RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "10") int size) {
-        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100));
-        Page<ModelCallLog> result = taskId == null
-                ? repository.findAllByOrderByCreatedAtDesc(pageable)
-                : repository.findByTaskIdOrderByCreatedAtDesc(taskId, pageable);
+        Paged<ModelCallLog> result = logService.list(taskId, page, size);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("total", result.getTotalElements());
-        body.put("page", result.getNumber());
-        body.put("size", result.getSize());
-        body.put("items", result.getContent());
+        body.put("total", result.total());
+        body.put("page", result.page());
+        body.put("size", result.size());
+        body.put("items", result.items());
         return body;
     }
 }

@@ -14,6 +14,7 @@ public class TaskTypeClassifier {
         CHAT("普通对话"),
         CODE_GENERATION("代码生成"),
         CODE_REVIEW("代码审查"),
+        UNIT_TEST("单元测试编写"),
         SCHEMA_QUERY("表结构查询");
 
         private final String label;
@@ -34,6 +35,9 @@ public class TaskTypeClassifier {
         String m = message.toLowerCase(Locale.ROOT);
         if (containsAny(m, "审查", "评审", "review", "review code", "检查代码", "找bug", "找 bug", "代码检查")) {
             return TaskType.CODE_REVIEW;
+        }
+        if (containsAny(m, "单元测试", "单测", "unit test", "unit-test", "unittest", "测试代码", "测试用例")) {
+            return TaskType.UNIT_TEST;
         }
         if (containsAny(m, "表结构", "建表", "表字段", "schema", "table structure", "show tables", "查询表", "有哪些表")) {
             return TaskType.SCHEMA_QUERY;

@@ -1,7 +1,7 @@
 -- =====================================================================
 -- AI 代码助手 数据库初始化脚本（MySQL 8.0+）
--- 说明：应用配置了 spring.jpa.hibernate.ddl-auto=update 可自动建表，
---       本脚本用于显式建表 / 了解表结构。执行前请先创建数据库：
+-- 说明：MyBatis 不自动建表，首次部署需先执行本脚本初始化。
+--       执行前请先创建数据库：
 --       CREATE DATABASE ai_code_assistant DEFAULT CHARACTER SET utf8mb4;
 -- =====================================================================
 
@@ -59,3 +59,28 @@ CREATE TABLE IF NOT EXISTS model_call_log (
     KEY idx_log_session (session_id),
     KEY idx_log_created (created_at)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '模型调用日志';
+
+-- 会话表：一次对话会话一条记录
+CREATE TABLE IF NOT EXISTS chat_session (
+    id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    session_id  VARCHAR(64)  NOT NULL                COMMENT '会话 ID（唯一）',
+    title       VARCHAR(255) NOT NULL DEFAULT ''     COMMENT '会话标题（首条消息截断生成）',
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近活跃时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_session_id (session_id),
+    KEY idx_session_updated (updated_at)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对话会话';
+
+-- 对话消息表：保存用户需求与模型返回内容，按会话关联，支持问题追溯
+CREATE TABLE IF NOT EXISTS chat_message (
+    id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    session_id  VARCHAR(64)  NOT NULL                COMMENT '会话 ID',
+    role        VARCHAR(16)  NOT NULL                COMMENT '角色: USER/ASSISTANT',
+    content     TEXT                                  COMMENT '消息内容（用户需求 / 模型返回）',
+    task_id     BIGINT                               COMMENT '关联任务 ID',
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (id),
+    KEY idx_msg_session (session_id, created_at),
+    KEY idx_msg_task (task_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '对话消息';

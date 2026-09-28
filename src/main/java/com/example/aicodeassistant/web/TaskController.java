@@ -1,11 +1,11 @@
 package com.example.aicodeassistant.web;
 
+import com.example.aicodeassistant.common.Paged;
 import com.example.aicodeassistant.entity.CodeTask;
 import com.example.aicodeassistant.entity.ReviewReport;
 import com.example.aicodeassistant.service.CodeTaskService;
 import com.example.aicodeassistant.service.ReviewReportService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,12 +31,12 @@ public class TaskController {
     @GetMapping
     public Map<String, Object> list(@RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "10") int size) {
-        Page<CodeTask> result = taskService.list(page, size);
+        Paged<CodeTask> result = taskService.list(page, size);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("total", result.getTotalElements());
-        body.put("page", result.getNumber());
-        body.put("size", result.getSize());
-        body.put("items", result.getContent());
+        body.put("total", result.total());
+        body.put("page", result.page());
+        body.put("size", result.size());
+        body.put("items", result.items());
         return body;
     }
 

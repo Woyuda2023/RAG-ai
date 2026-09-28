@@ -77,40 +77,65 @@ public class AgentOrchestrator {
         List<ToolInvocation> invocations = new ArrayList<>();
         String finalText;
 
-        while (true) {
-            Response<AiMessage> response = callModel(memory, specs, taskId, sessionId);
-            AiMessage aiMessage = response.content();
-            memory.add(aiMessage);
+        try {
+            while (true) {
+                Response<AiMessage> response = callModel(memory, specs, taskId, sessionId);
+                AiMessage aiMessage = response.content();
+                memory.add(aiMessage);
 
-            // 模型给出最终文本回复，结束
-            if (!aiMessage.hasToolExecutionRequests()) {
-                finalText = aiMessage.text() == null ? "（模型未给出文本回复）" : aiMessage.text();
-                break;
-            }
-
-            // 已达最大工具轮次，强制停止
-            if (rounds >= maxRounds) {
-                finalText = "已达到工具调用最大轮次（" + maxRounds + "），已停止继续调用工具。最后一次模型输出："
-                        + (aiMessage.text() == null ? "（仅工具调用请求，无文本）" : aiMessage.text());
-                break;
-            }
-
-            // 执行本轮全部工具调用
-            for (ToolExecutionRequest request : aiMessage.toolExecutionRequests()) {
-                ToolInvocation invocation = executeTool(request);
-                invocations.add(invocation);
-                String feedback;
-                if (invocation.success()) {
-                    feedback = invocation.resultJson();
-                } else {
-                    feedback = "{\"success\":false,\"data\":null,\"error\":\"" + escapeJson(invocation.error()) + "\",\"meta\":{}}";
+                // 模型给出最终文本回复，结束
+                if (!aiMessage.hasToolExecutionRequests()) {
+                    finalText = aiMessage.text() == null ? "（模型未给出文本回复）" : aiMessage.text();
+                    break;
                 }
-                memory.add(ToolExecutionResultMessage.from(request, feedback));
+
+                // 已达最大工具轮次，强制停止
+                if (rounds >= maxRounds) {
+                    finalText = "已达到工具调用最大轮次（" + maxRounds + "），已停止继续调用工具。最后一次模型输出："
+                            + (aiMessage.text() == null ? "（仅工具调用请求，无文本）" : aiMessage.text());
+                    break;
+                }
+
+                // 执行本轮全部工具调用
+                for (ToolExecutionRequest request : aiMessage.toolExecutionRequests()) {
+                    ToolInvocation invocation = executeTool(request);
+                    invocations.add(invocation);
+                    String feedback;
+                    if (invocation.success()) {
+                        feedback = invocation.resultJson();
+                    } else {
+                        feedback = "{\"success\":false,\"data\":null,\"error\":\"" + escapeJson(invocation.error()) + "\",\"meta\":{}}";
+                    }
+                    memory.add(ToolExecutionResultMessage.from(request, feedback));
+                }
+                rounds++;
             }
-            rounds++;
+        } catch (Exception e) {
+            // 业务容错：捕获 API 限流 / 调用超时 / 其他模型调用异常，给出可读错误
+            log.error("Agent 执行异常: {}", e.getMessage());
+            return AgentResult.fail(classifyError(e));
         }
 
         return new AgentResult(true, finalText, rounds, invocations, sessionId);
+    }
+
+    /** 将模型调用异常归类为可读错误信息（限流 / 超时 / 其他） */
+    private String classifyError(Throwable e) {
+        String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        if (message.contains("429") || lower.contains("rate limit") || lower.contains("too many requests")
+                || lower.contains("限流") || lower.contains("访问量过大")) {
+            return "模型服务触发限流（rate limit），请稍后重试。原始信息: " + message;
+        }
+        if (lower.contains("timeout") || lower.contains("timed out") || lower.contains("read timed out")
+                || lower.contains("超时")) {
+            return "模型调用超时，请稍后重试，或调大 llm.timeout 配置。原始信息: " + message;
+        }
+        if (lower.contains("401") || lower.contains("invalid api key") || lower.contains("unauthorized")
+                || lower.contains("鉴权") || lower.contains("api key")) {
+            return "模型 API 鉴权失败，请检查 llm.api-key 配置。原始信息: " + message;
+        }
+        return "模型调用失败: " + message;
     }
 
     /**

@@ -1,14 +1,21 @@
 package com.example.aicodeassistant;
 
 import com.example.aicodeassistant.agent.AgentResult;
+import com.example.aicodeassistant.agent.TaskTypeClassifier;
 import com.example.aicodeassistant.agent.ToolInvocation;
 import com.example.aicodeassistant.config.AssistantProperties;
+import com.example.aicodeassistant.entity.ChatSession;
+import com.example.aicodeassistant.mapper.ChatMessageMapper;
+import com.example.aicodeassistant.mapper.ChatSessionMapper;
+import com.example.aicodeassistant.mapper.ReviewReportMapper;
 import com.example.aicodeassistant.processing.ResultTruncator;
-import com.example.aicodeassistant.repository.ReviewReportRepository;
 import com.example.aicodeassistant.security.InputSanitizer;
 import com.example.aicodeassistant.security.PermissionGuard;
 import com.example.aicodeassistant.security.PromptInjectionFilter;
+import com.example.aicodeassistant.service.ChatSessionService;
 import com.example.aicodeassistant.service.ReviewReportService;
+import com.example.aicodeassistant.tool.CodeFormatCheckTool;
+import com.example.aicodeassistant.tool.CodeSpecQueryTool;
 import com.example.aicodeassistant.tool.ToolResult;
 import com.example.aicodeassistant.validation.ToolResultValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -156,8 +163,8 @@ class CoreLogicTest {
 
     @Test
     void reviewReportService_extractsIssuesFromWrappedToolResult() {
-        ReviewReportRepository repository = Mockito.mock(ReviewReportRepository.class);
-        ReviewReportService service = new ReviewReportService(repository, new ObjectMapper());
+        ReviewReportMapper mapper = Mockito.mock(ReviewReportMapper.class);
+        ReviewReportService service = new ReviewReportService(mapper, new ObjectMapper());
 
         // 编排器回填给模型的统一包装结构：data 字段内是审查 JSON 字符串
         String wrapped = """
@@ -168,6 +175,90 @@ class CoreLogicTest {
 
         int saved = service.saveFromAgentResult(7L, result);
         assertEquals(2, saved);
-        Mockito.verify(repository, Mockito.times(2)).save(Mockito.any());
+        Mockito.verify(mapper, Mockito.times(2)).insert(Mockito.any());
+    }
+
+    // ---------- 任务类型分类（含单元测试） ----------
+
+    @Test
+    void classifier_detectsTaskTypes() {
+        TaskTypeClassifier classifier = new TaskTypeClassifier();
+        assertEquals(TaskTypeClassifier.TaskType.UNIT_TEST,
+                classifier.classify("为 CsvReader 写单元测试"));
+        assertEquals(TaskTypeClassifier.TaskType.UNIT_TEST,
+                classifier.classify("帮我写一个 unit test"));
+        assertEquals(TaskTypeClassifier.TaskType.CODE_REVIEW,
+                classifier.classify("审查一下这段代码"));
+        assertEquals(TaskTypeClassifier.TaskType.CODE_GENERATION,
+                classifier.classify("用 Java 写一个 CSV 工具类"));
+        assertEquals(TaskTypeClassifier.TaskType.SCHEMA_QUERY,
+                classifier.classify("查询 user 表结构"));
+        assertEquals(TaskTypeClassifier.TaskType.CHAT,
+                classifier.classify("你好"));
+    }
+
+    // ---------- 代码规范查询 / 格式校验工具 ----------
+
+    @Test
+    void codeSpecQueryTool_returnsBuiltinSpecs() {
+        CodeSpecQueryTool tool = new CodeSpecQueryTool();
+        ToolResult java = tool.querySpec("Java");
+        assertTrue(java.success());
+        assertTrue(java.data().contains("Javadoc"));
+        ToolResult sql = tool.querySpec("SQL");
+        assertTrue(sql.success());
+        assertTrue(sql.data().contains("索引"));
+        ToolResult unknown = tool.querySpec("JavaScript");
+        assertTrue(unknown.success());
+        assertFalse(tool.querySpec("  ").success());
+    }
+
+    @Test
+    void codeFormatCheckTool_reportsFormatIssues() {
+        CodeFormatCheckTool tool = new CodeFormatCheckTool(new ObjectMapper());
+        // 干净代码 → formatted
+        // 干净代码（无行尾空格/超长行/通配符导入，结尾带换行）→ formatted
+        ToolResult clean = tool.formatCheck("public class A {\n    int x;\n}\n", "Java");
+        assertTrue(clean.success());
+        assertTrue(clean.data().contains("\"formatted\":true"));
+        // 脏代码：行尾空格 + 通配符 import + 超长行 → 报告问题
+        StringBuilder longLine = new StringBuilder("// ");
+        while (longLine.length() < 130) {
+            longLine.append('a');
+        }
+        String dirty = "import java.util.*;   \n" + longLine + "\npublic class B {}\n";
+        ToolResult report = tool.formatCheck(dirty, "Java");
+        assertTrue(report.success());
+        assertTrue(report.data().contains("\"formatted\":false"));
+        assertTrue(report.data().contains("trailing-whitespace"));
+        assertTrue(report.data().contains("wildcard-import"));
+        assertTrue(report.data().contains("line-too-long"));
+    }
+
+    // ---------- 对话会话服务 ----------
+
+    @Test
+    void chatSessionService_ensuresAndTitles() {
+        ChatSessionMapper sessionMapper = Mockito.mock(ChatSessionMapper.class);
+        ChatMessageMapper messageMapper = Mockito.mock(ChatMessageMapper.class);
+        ChatSessionService service = new ChatSessionService(sessionMapper, messageMapper);
+
+        // 会话不存在 → ensure 创建
+        Mockito.when(sessionMapper.findBySessionId("s1")).thenReturn(null);
+        service.ensure("s1");
+        Mockito.verify(sessionMapper, Mockito.times(1)).insert(Mockito.any());
+
+        // 会话存在 → 不再创建
+        ChatSession existing = ChatSession.builder().sessionId("s1").title("").build();
+        Mockito.when(sessionMapper.findBySessionId("s1")).thenReturn(existing);
+        service.ensure("s1");
+        Mockito.verify(sessionMapper, Mockito.times(1)).insert(Mockito.any());
+
+        // 标题为空 → 用首条用户消息截断生成
+        service.updateTitleIfBlank("s1", "请帮我写一个 CSV 解析工具类并附带单元测试，谢谢！");
+        Mockito.verify(sessionMapper, Mockito.times(1)).updateTitle(
+                org.mockito.ArgumentMatchers.eq("s1"),
+                org.mockito.ArgumentMatchers.eq("请帮我写一个 CSV 解析工具类并附带单元测试，谢谢！"),
+                Mockito.any());
     }
 }
