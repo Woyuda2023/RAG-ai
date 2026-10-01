@@ -9,3 +9,9 @@ target/
 
 # 前端备份
 _backup/
+
+# 本地环境配置（含密钥/密码，禁止提交）
+.env
+*.local.yml
+application-local.yml
+application-local.yaml
